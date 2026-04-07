@@ -73,12 +73,20 @@ A non-blocking `flock` on `$XDG_RUNTIME_DIR/i3-quickphrase/<name>.lock`
 prevents key-repeat or rapid double-press from firing the phrase multiple
 times.
 
-### `bindsym --release` + `--clearmodifiers`
+### `bindsym --release` + explicit `keyup` of all modifiers
 Defeats the i3 mod-key release race documented in
 [i3 FAQ #478](https://faq.i3wm.org/question/478/how-do-i-simulate-keypresses/index.html).
 By using `--release`, the binding only fires after the user releases the
-trigger key, so xdotool isn't typing while Alt is still physically held
-(which would otherwise turn typed letters into Alt+letter combinations).
+trigger key. Then, before typing, the script explicitly issues
+`xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L Shift_R Super_L Super_R`
+to clear any modifier that may still be held.
+
+**Important note:** `xdotool --clearmodifiers` is intentionally NOT used.
+That flag has a known restore-step bug ([xdotool#43](https://github.com/jordansissel/xdotool/issues/43))
+where it re-presses modifiers at the end of typing — if the user has
+released them physically by then, X11 ends up with an unmatched synthetic
+press and the modifier appears "stuck" until the next physical release.
+The explicit `keyup` approach has no restore step, so nothing can get stuck.
 
 ### Atomic i3 config edits
 `install.sh` writes the modified `~/.config/i3/config` to a temp file,

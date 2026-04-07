@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-04-07
+
+### Fixed
+- **Stuck Alt modifier after typing.** v0.1.0 used
+  `xdotool type --clearmodifiers`, which has a known restore-step bug
+  ([xdotool#43](https://github.com/jordansissel/xdotool/issues/43)):
+  it re-presses modifiers at the end of typing, leaving them "stuck" if
+  the user has already released them physically. v0.1.1 replaces the
+  `--clearmodifiers` flag with an explicit
+  `xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L Shift_R Super_L Super_R`
+  before typing, plus a 30 ms propagation sleep. The keyup approach has
+  no restore step so nothing can get stuck. Found by Trevor in live
+  testing of v0.1.0.
+
+### Changed
+- `bin/i3-quickphrase` injection block: dropped `--clearmodifiers`,
+  added explicit `keyup` of all common modifier keys with a `2>/dev/null
+  || true` so the keyup never fails the script.
+- `SECURITY.md` and `DESIGN.md` updated to document the new approach.
+
 ## [0.1.0] — 2026-04-07
 
 ### Added
@@ -45,3 +65,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refuse-root install/uninstall.
 
 [0.1.0]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.0
+[0.1.1]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.1

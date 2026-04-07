@@ -168,12 +168,22 @@ if ! flock -n 9; then
   exit 0
 fi
 
+# Defeat the held-modifier race: explicitly release any modifier keys
+# before typing. This is more reliable than xdotool's --clearmodifiers,
+# which has a known "restore" bug (xdotool#43) where it re-presses
+# modifiers at the end of typing — leaving them stuck if the user has
+# already released them physically.
+xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L Shift_R Super_L Super_R 2>/dev/null || true
+
+# Tiny propagation delay so the synthetic keyup events land before xdotool
+# starts pumping characters into X11's event queue.
+sleep 0.03
+
 # Inject the phrase. --window targets the captured id (focus-drift safe).
-# --clearmodifiers releases held modifiers around the type operation.
 # --delay 12 is xdotool's well-tested default.
 # --file reads bytes literally so the trailing space is preserved.
+# No --clearmodifiers: we already cleared them explicitly above.
 xdotool type \
-  --clearmodifiers \
   --delay 12 \
   --window "$active_id" \
   --file "$phrase_file"

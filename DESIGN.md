@@ -84,21 +84,42 @@ bug ([kovidgoyal/kitty#4487](https://github.com/kovidgoyal/kitty/issues/4487))
 and requires a daemon, so its theoretical advantages don't materialize for
 this use case.
 
-### Why `bindsym --release` + `--clearmodifiers` + `flock`?
+### Why `bindsym --release` + explicit `keyup` + `flock`?
 
 These solve **four different races**, not one:
 1. **Mod-key release race** (i3 fires `exec` while user still holds Alt)
-   → fixed by `--release`, which makes i3 wait for key-up
+   → fixed by `--release`, which makes i3 wait for the trigger key's key-up
 2. **Modifier-leak race** (xdotool sees Mod1 active while typing)
-   → fixed by `--clearmodifiers`, which sends synthetic key-release
+   → fixed by an explicit `xdotool keyup Alt_L Alt_R ... Super_L Super_R`
+   before typing
 3. **Key-repeat reentry** (held key fires the bind multiple times)
    → fixed by `flock -n`, which serializes invocations
 4. **Focus-drift race** (user Alt+Tabs between bind-fire and type)
    → fixed by capturing the window ID at start and passing
    `--window <id>` to xdotool
 
-The Engineer's initial proposal solved races 1 and 2; the Pentester's
-adversarial review caught races 3 and 4.
+### Why NOT `xdotool --clearmodifiers`?
+
+The first version of v0.1.0 used `xdotool type --clearmodifiers`, which
+seemed like the right answer (it's what the i3 FAQ recommends). But
+real-world testing surfaced [xdotool#43](https://github.com/jordansissel/xdotool/issues/43)'s
+"stuck modifiers after --clearmodifiers" bug:
+
+1. User presses Alt+M
+2. `bindsym --release` fires when M is released
+3. xdotool starts. `--clearmodifiers` queries the modifier state, sees
+   Alt held (because at fire time, Alt may still be held), sends a
+   synthetic Alt-Release, types the phrase, and then **sends a synthetic
+   Alt-Press at the end to "restore" the original state**
+4. By that time the user has physically released Alt
+5. X11 now has an unmatched synthetic Alt-Press → Alt appears stuck
+   until the next physical Alt press/release
+6. User tries to type the next character → it gets interpreted as
+   Alt+character, often producing nothing or triggering a binding
+
+The explicit `xdotool keyup` approach fires synthetic key-release events
+without any matching "restore" step, so nothing can get left dangling.
+v0.1.1 was the patch that fixed this.
 
 ### Why `xdotool --file` instead of an argv?
 
