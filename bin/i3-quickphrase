@@ -1,0 +1,179 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: MIT
+# i3-quickphrase — bind i3 keys to type fixed phrases into the focused window
+# https://github.com/cr4shOverr1de/i3-quickphrase
+
+set -euo pipefail
+
+VERSION="0.1.0"
+PROG="i3-quickphrase"
+
+# Resolve repo root via the symlink target so this works whether the user
+# invokes the script directly or through the installed symlink.
+SCRIPT_PATH="$(readlink -f "${BASH_SOURCE[0]}")"
+REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
+PHRASES_DIR="$REPO_ROOT/phrases"
+LIB_DIR="$REPO_ROOT/lib"
+LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/i3-quickphrase"
+
+# Source the validator
+# shellcheck source=../lib/validate.sh
+if [[ -f "$LIB_DIR/validate.sh" ]]; then
+  source "$LIB_DIR/validate.sh"
+else
+  echo "$PROG: missing $LIB_DIR/validate.sh" >&2
+  exit 1
+fi
+
+err()  { echo "$PROG: $*" >&2; }
+
+die() {
+  err "$1"
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send -a "$PROG" "$PROG error" "$1" >/dev/null 2>&1 || true
+  fi
+  exit 1
+}
+
+usage() {
+  cat <<EOF
+$PROG $VERSION — bind i3 keys to type fixed phrases
+
+Usage:
+  $PROG <phrase-name>     Type the phrase named <phrase-name> into the focused window
+  $PROG doctor            Run diagnostics
+  $PROG --version         Print version
+  $PROG --help            Print this message
+
+Phrases live in: $PHRASES_DIR
+
+Add a phrase:
+  printf 'Your phrase ' > $PHRASES_DIR/yourname.txt
+  echo 'bindsym --release \$mod+x exec --no-startup-id ~/.local/bin/$PROG yourname' \\
+       >> $REPO_ROOT/dist/i3-quickphrase.conf
+  i3-msg reload
+
+Environment:
+  I3_QUICKPHRASE_ALLOWED_CLASSES   Comma-separated allowlist of window classes.
+                                   Default: '*' (allow any). Example: 'kitty,Firefox'.
+EOF
+}
+
+doctor() {
+  echo "$PROG $VERSION doctor"
+  echo "Repo:        $REPO_ROOT"
+  echo "Phrases dir: $PHRASES_DIR"
+  echo "Lock dir:    $LOCK_DIR"
+  echo
+  echo "Dependencies:"
+  for cmd in xdotool xprop notify-send i3-msg flock stat; do
+    if command -v "$cmd" >/dev/null 2>&1; then
+      echo "  [ok]      $cmd: $(command -v "$cmd")"
+    else
+      echo "  [MISSING] $cmd"
+    fi
+  done
+  echo
+  echo "Phrases:"
+  if [[ -d "$PHRASES_DIR" ]]; then
+    local found=0
+    local f
+    for f in "$PHRASES_DIR"/*.txt; do
+      [[ -e "$f" ]] || continue
+      found=1
+      local size name
+      size="$(wc -c <"$f")"
+      name="$(basename "$f" .txt)"
+      if validate_phrase_file "$f" 2>/dev/null; then
+        echo "  [ok]      $name ($size bytes)"
+      else
+        echo "  [INVALID] $name ($size bytes) — see validate output"
+      fi
+    done
+    if [[ "$found" -eq 0 ]]; then
+      echo "  (no phrases)"
+    fi
+  else
+    echo "  (phrases dir missing)"
+  fi
+  echo
+  if [[ -n "${DISPLAY:-}" ]]; then
+    echo "DISPLAY:     $DISPLAY"
+  else
+    echo "DISPLAY:     (unset — xdotool will not work)"
+  fi
+  if command -v xdotool >/dev/null 2>&1; then
+    local id
+    id="$(xdotool getactivewindow 2>/dev/null || true)"
+    if [[ -n "$id" ]]; then
+      echo "Active id:   $id"
+      if command -v xprop >/dev/null 2>&1; then
+        local wmclass
+        wmclass="$(xprop -id "$id" WM_CLASS 2>/dev/null || true)"
+        echo "Active class: ${wmclass:-unknown}"
+      fi
+    fi
+  fi
+  echo
+  echo "Allowlist:   ${I3_QUICKPHRASE_ALLOWED_CLASSES:-* (any window)}"
+}
+
+# ---- argument dispatch ----
+case "${1:-}" in
+  ""|-h|--help) usage; exit 0 ;;
+  --version)    echo "$PROG $VERSION"; exit 0 ;;
+  doctor)       doctor; exit 0 ;;
+esac
+
+# ---- main: type a phrase ----
+phrase_name="$1"
+
+validate_phrase_name "$phrase_name" || die "invalid phrase name: $phrase_name"
+
+phrase_file="$PHRASES_DIR/$phrase_name.txt"
+validate_phrase_file "$phrase_file" || die "phrase file failed validation: $phrase_file"
+
+# Need DISPLAY for xdotool
+if [[ -z "${DISPLAY:-}" ]]; then
+  die "DISPLAY is unset (Wayland or no X server)"
+fi
+
+# Capture active window NOW (defeats focus drift between check and type)
+active_id="$(xdotool getactivewindow 2>/dev/null || true)"
+[[ -n "$active_id" ]] || die "no active window detected"
+
+# Optional window-class allowlist
+allowed="${I3_QUICKPHRASE_ALLOWED_CLASSES:-*}"
+if [[ "$allowed" != "*" ]]; then
+  if ! command -v xprop >/dev/null 2>&1; then
+    die "I3_QUICKPHRASE_ALLOWED_CLASSES is set but xprop is not installed"
+  fi
+  # WM_CLASS is reported as: WM_CLASS(STRING) = "instance", "class"
+  # We grab the second quoted string (the class).
+  active_class="$(xprop -id "$active_id" WM_CLASS 2>/dev/null \
+                  | sed -n 's/.*"\([^"]*\)"$/\1/p')"
+  if [[ -z "$active_class" ]]; then
+    die "could not determine active window class"
+  fi
+  if ! echo "$allowed" | tr ',' '\n' | grep -qFx "$active_class"; then
+    die "focused window class '$active_class' not in allowlist '$allowed'"
+  fi
+fi
+
+# Single-shot guard via flock (prevents key-repeat double-fire)
+mkdir -p "$LOCK_DIR"
+exec 9>"$LOCK_DIR/$phrase_name.lock"
+if ! flock -n 9; then
+  # Another invocation is in flight — exit silently to avoid duplicate typing
+  exit 0
+fi
+
+# Inject the phrase. --window targets the captured id (focus-drift safe).
+# --clearmodifiers releases held modifiers around the type operation.
+# --delay 12 is xdotool's well-tested default.
+# --file reads bytes literally so the trailing space is preserved.
+xdotool type \
+  --clearmodifiers \
+  --delay 12 \
+  --window "$active_id" \
+  --file "$phrase_file"
