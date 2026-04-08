@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.2] — 2026-04-08
+
+### Added
+- New default phrase: `clarify` bound to `Alt+period`. Content:
+  "Ask me clarifying questions until you're 98% sure you understand what
+  I want. " (78 bytes exact, trailing space preserved, no trailing LF).
+- Chosen after verifying Trevor's preferred Alt+N was taken by Arszilla's
+  `border normal` binding at `keybinds.conf:47`. Alt+period was selected
+  as the closest physically-adjacent free key to Alt+M on QWERTY.
+
+### Framework validation
+- **First real test of the "convention over CLI" extensibility claim.**
+  Adding phrase #2 took exactly three commands:
+  1. `printf '%s' "..." > phrases/clarify.txt`
+  2. Append one `bindsym` line to `dist/i3-quickphrase.conf`
+  3. `i3-msg reload`
+  The Architect seat's argument against the Designer's full stateful CLI
+  was vindicated — no `qp add` wizard needed at the 2-phrase scale.
+
 ## [0.1.1] — 2026-04-07
 
 ### Fixed
@@ -66,3 +85,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 [0.1.0]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.0
 [0.1.1]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.1
+[0.1.2]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.2
