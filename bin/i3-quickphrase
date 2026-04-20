@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.0"
+VERSION="0.1.3"
 PROG="i3-quickphrase"
 
 # Resolve repo root via the symlink target so this works whether the user
@@ -180,10 +180,44 @@ xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L Shift_R Super_L Super_R 2>
 sleep 0.03
 
 # Inject the phrase. --window targets the captured id (focus-drift safe).
-# --delay 12 is xdotool's well-tested default.
-# --file reads bytes literally so the trailing space is preserved.
-# No --clearmodifiers: we already cleared them explicitly above.
-xdotool type \
-  --delay 12 \
-  --window "$active_id" \
-  --file "$phrase_file"
+#
+# v0.1.3 splits emission into two paths: non-space runs go through
+# `xdotool type` (12 ms/char) while each space goes through
+# `xdotool key --delay 0 space`. The reason: Claude Code's push-to-talk
+# voice mode retroactively removes the 1-2 most recent spaces from its
+# prompt buffer when it detects a "held space." `xdotool type` holds
+# each synthetic KeyPress open for several milliseconds (xdotool
+# v3.20160805.1's chardelay floor plus X11 XSync + XkbLockGroup + XFlush
+# roundtrip), which trips that detector. `xdotool key` emits KeyPress
+# and KeyRelease back-to-back through a single XTEST call pair with no
+# intra-pair sleep (sub-millisecond hold), which the detector ignores.
+#
+# Per-run `--file -` (stdin) keeps the byte-literal, no-argv-leak
+# invariant from v0.1.0 for every word. The character loop preserves
+# leading spaces, trailing spaces, and back-to-back spaces exactly
+# (`awk RS=" "` drops the trailing empty field on some awks, so a
+# pure-bash loop is used instead).
+#
+# Refs:
+#   https://github.com/anthropics/claude-code/issues/37932
+#   https://github.com/jordansissel/xdotool/blob/v3.20160805.1/xdo.c#L958
+phrase="$(<"$phrase_file")"
+len="${#phrase}"
+buffer=""
+for (( i=0; i<len; i++ )); do
+  ch="${phrase:$i:1}"
+  if [[ "$ch" == " " ]]; then
+    if [[ -n "$buffer" ]]; then
+      printf '%s' "$buffer" \
+        | xdotool type --delay 12 --window "$active_id" --file -
+      buffer=""
+    fi
+    xdotool key --delay 0 --window "$active_id" space
+  else
+    buffer+="$ch"
+  fi
+done
+if [[ -n "$buffer" ]]; then
+  printf '%s' "$buffer" \
+    | xdotool type --delay 12 --window "$active_id" --file -
+fi

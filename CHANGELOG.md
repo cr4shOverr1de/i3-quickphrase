@@ -5,6 +5,70 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3] — 2026-04-20
+
+### Fixed
+- **Dropped spaces when typing into Claude Code's CLI prompt.** v0.1.2's
+  `xdotool type --file --delay 12` held each synthetic `KeyPress` open
+  for several milliseconds before the matching `KeyRelease` — xdotool
+  v3.20160805.1's `CHARDELAY` floor in `xdo_enter_text_window`
+  ([xdo.c:958](https://github.com/jordansissel/xdotool/blob/v3.20160805.1/xdo.c#L958))
+  plus X11 `XSync` + `XkbLockGroup` + `XFlush` roundtrip per event.
+  Claude Code's push-to-talk voice mode (added ~v2.1.69) interprets
+  held-space as a "start recording" intent and retroactively removes
+  the 1-2 most recent spaces from its prompt buffer. On phrases like
+  `comprehensive` (87 bytes, 13 interior + trailing spaces) this shows
+  up as random words running together — `"usecomprehensive effort,"` or
+  `"your time is unlimitedI prefer"` — and a brief voice-mode UI flash.
+  Other apps (kitty itself, browsers, editors) don't implement this
+  retroactive-delete so they were unaffected.
+
+  Matches upstream reports
+  [anthropics/claude-code#37932](https://github.com/anthropics/claude-code/issues/37932)
+  (Linux synthetic-keystroke space loss) and
+  [#38620](https://github.com/anthropics/claude-code/issues/38620)
+  (synthesized-paste regression).
+
+### Changed
+- `bin/i3-quickphrase`: replaced the single whole-phrase `xdotool type`
+  call with a hybrid emission loop:
+  - Non-space runs type through `xdotool type --delay 12 --file -`
+    (stdin-fed so the byte-literal / no-argv-leak guarantee holds
+    per-run, not just once).
+  - Each ASCII `0x20` goes through `xdotool key --delay 0 --window
+    "$active_id" space`, which emits `KeyPress`+`KeyRelease`
+    back-to-back via a single XTEST call pair — sub-millisecond hold,
+    below Claude Code's voice-mode detection window.
+  - A pure-bash character loop drives the split so leading, trailing,
+    and back-to-back spaces are preserved exactly (`awk RS=" "` drops
+    the trailing empty record on many awks — would have silently eaten
+    the load-bearing trailing space on both default phrases).
+- `VERSION` bumped from `0.1.0` to `0.1.3` (was never updated when
+  `0.1.1` and `0.1.2` landed — caught during this fix).
+
+### Preserved (no regression)
+- Explicit `xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L
+  Shift_R Super_L Super_R` before typing (v0.1.1 stuck-modifier fix).
+- `sleep 0.03` propagation delay after keyup.
+- `--window "$active_id"` on every `xdotool` call (focus-drift
+  safety) — now applies to both `type` and `key` calls, strengthening
+  the invariant.
+- `flock -n` single-shot guard against key-repeat reentry.
+- `lib/validate.sh` phrase-content allowlist (printable ASCII + TAB +
+  LF) and phrase-name regex.
+- Trailing-space preservation in `phrases/*.txt` (verified via
+  byte-count test against both `comprehensive.txt` and `clarify.txt`).
+
+### Found by
+Trevor in live Alt+M / Alt+. testing into Claude Code running in
+kitty on X11 Kali, 2026-04-20. Root cause localized to xdotool's
+press-release dwell via source-level archaeology of xdotool v2016
+(`xdo.c:958-1006`, `_xdo_send_key:1512`) and Claude Code's
+[voice-dictation docs](https://code.claude.com/docs/en/voice-dictation)
+("Claude Code detects a held key by watching for rapid key-repeat
+events from your terminal, so there is a brief warmup before recording
+begins"). `xdotool key` bypasses the chardelay path entirely.
+
 ## [0.1.2] — 2026-04-08
 
 ### Added
@@ -86,3 +150,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 [0.1.0]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.0
 [0.1.1]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.1
 [0.1.2]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.2
+[0.1.3]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.3
