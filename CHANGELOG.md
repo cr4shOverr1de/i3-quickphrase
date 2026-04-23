@@ -5,6 +5,37 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5] — 2026-04-20
+
+### Changed
+- **`SPACE_SETTLE` default raised from `0.05` (50 ms) to `0.15`
+  (150 ms).** Live testing of v0.1.4 showed that 50 ms still tripped
+  Claude Code's voice-mode detector on some setups — the worst-case
+  inter-space gap (~75 ms, after a single-character word like "I")
+  appears to be inside the detector's sensitivity window, which
+  looks closer to 100 ms than to X11's 30 ms key-repeat rate.
+  150 ms lifts the worst case to ~175 ms — comfortably outside.
+  Total phrase runtime rises to ~2.0 s (was ~1.6 s at v0.1.4,
+  ~1.0 s at v0.1.3).
+
+### Tuning guide (if 150 ms still isn't enough)
+- Bump via the env var without editing code:
+    `I3_QUICKPHRASE_SPACE_SETTLE=0.2 ~/.local/bin/i3-quickphrase comprehensive`
+- To persist in the i3 binding, edit
+  `~/projects/i3-quickphrase/dist/i3-quickphrase.conf` and change:
+    `bindsym --release $mod+m exec --no-startup-id ~/.local/bin/i3-quickphrase comprehensive`
+  to:
+    `bindsym --release $mod+m exec --no-startup-id env I3_QUICKPHRASE_SPACE_SETTLE=0.2 ~/.local/bin/i3-quickphrase comprehensive`
+  Then run `i3-msg reload`.
+- Step up in 50 ms increments: `0.2`, `0.25`, `0.3`. Each 50 ms
+  adds ~0.65 s to the 13-space `comprehensive` phrase runtime.
+
+### Preserved (no regression)
+- All v0.1.4 / v0.1.3 / v0.1.1 / v0.1.0 invariants unchanged.
+
+### Found by
+Trevor in live Alt+M / Alt+. re-testing of v0.1.4, 2026-04-20.
+
 ## [0.1.4] — 2026-04-20
 
 ### Fixed
@@ -198,3 +229,4 @@ begins"). `xdotool key` bypasses the chardelay path entirely.
 [0.1.2]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.2
 [0.1.3]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.3
 [0.1.4]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.4
+[0.1.5]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.5

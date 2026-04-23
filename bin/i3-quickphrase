@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.4"
+VERSION="0.1.5"
 PROG="i3-quickphrase"
 
 # Resolve repo root via the symlink target so this works whether the user
@@ -18,11 +18,19 @@ LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/i3-quickphrase"
 
 # Inter-space settle time (seconds). See the injection block below for
 # the full rationale. Override at runtime via the environment variable
-# I3_QUICKPHRASE_SPACE_SETTLE (e.g. "0.1" for 100 ms, "0" to disable).
-# 0.05 s = 50 ms, which keeps adjacent space events comfortably beyond
-# X11's default 30 ms key-repeat rate even when the intervening word
-# is a single character like "I".
-SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.05}"
+# I3_QUICKPHRASE_SPACE_SETTLE (e.g. "0.2" for 200 ms, "0" to disable).
+#
+# v0.1.4 default was 0.05 s (50 ms). Live testing showed that value
+# still tripped Claude Code's voice-mode detector on ~30 % of fires —
+# the worst case after a single-character word like "I" pushed the
+# inter-space gap to only ~75 ms, which appears to be inside the
+# detector's sensitivity window. v0.1.5 raises the default to 0.15 s
+# (150 ms), giving a worst-case inter-space gap of ~175 ms — about
+# 6× X11's default 30 ms key-repeat rate and past the ~100 ms mark
+# where Claude Code's detector appears to draw the line in practice.
+# If you still see the rainbow cursor / dropped spaces, bump higher
+# via the env var (try 0.2 then 0.25) before opening an issue.
+SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.15}"
 
 # Source the validator
 # shellcheck source=../lib/validate.sh
@@ -201,18 +209,20 @@ sleep 0.03
 # pair with no intra-pair sleep, so the press-release dwell drops to
 # sub-millisecond.
 #
-# v0.1.4 adds a post-space settle sleep of $SPACE_SETTLE seconds.
-# Diagnostic runs of v0.1.3 still tripped the voice detector on ~30 %
-# of fires, localized to short inter-space words: "I", "is", "me".
-# The failure mode is not the press-release dwell (already tightest
-# possible with xdotool) — it is the gap between adjacent SPACE
-# EVENTS. For a single-character word typed at --delay 12 plus the
-# xdotool process startup overhead, consecutive spaces arrive about
-# 25 ms apart, which is inside X11's default 30 ms key-repeat window
-# and looks like a held key to Claude Code's repeat-based detector.
-# SPACE_SETTLE 0.05 (50 ms) after each key emission lifts the worst-
-# case inter-space gap to ~75 ms, safely outside the detection window.
-# Tune via the I3_QUICKPHRASE_SPACE_SETTLE env var.
+# v0.1.4 added a post-space settle sleep of $SPACE_SETTLE seconds to
+# the emission loop. The failure mode is not the press-release dwell
+# (already tightest possible with xdotool) — it is the gap between
+# adjacent SPACE EVENTS. For a single-character word typed at
+# --delay 12 plus xdotool process-startup overhead, consecutive
+# spaces arrive about 25 ms apart, which is inside X11's default
+# 30 ms key-repeat window and looks like a held key to Claude Code's
+# repeat-based detector.
+#
+# v0.1.5 raises the default settle from 0.05 s to 0.15 s after live
+# testing showed 50 ms alone still tripped the detector on some
+# setups (inter-space gap of ~75 ms was still too tight). 150 ms
+# lifts the worst-case inter-space gap to ~175 ms, ~6× X11's repeat
+# rate. Tune further via the I3_QUICKPHRASE_SPACE_SETTLE env var.
 #
 # Per-run `--file -` (stdin) keeps the byte-literal, no-argv-leak
 # invariant from v0.1.0 for every word. The character loop preserves
