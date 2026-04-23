@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.5"
+VERSION="0.1.6"
 PROG="i3-quickphrase"
 
 # Resolve repo root via the symlink target so this works whether the user
@@ -20,17 +20,15 @@ LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/i3-quickphrase"
 # the full rationale. Override at runtime via the environment variable
 # I3_QUICKPHRASE_SPACE_SETTLE (e.g. "0.2" for 200 ms, "0" to disable).
 #
-# v0.1.4 default was 0.05 s (50 ms). Live testing showed that value
-# still tripped Claude Code's voice-mode detector on ~30 % of fires —
-# the worst case after a single-character word like "I" pushed the
-# inter-space gap to only ~75 ms, which appears to be inside the
-# detector's sensitivity window. v0.1.5 raises the default to 0.15 s
-# (150 ms), giving a worst-case inter-space gap of ~175 ms — about
-# 6× X11's default 30 ms key-repeat rate and past the ~100 ms mark
-# where Claude Code's detector appears to draw the line in practice.
-# If you still see the rainbow cursor / dropped spaces, bump higher
-# via the env var (try 0.2 then 0.25) before opening an issue.
-SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.15}"
+# Tuning history:
+#   v0.1.4: default 0.05 s (50 ms)  — still tripped the detector.
+#   v0.1.5: default 0.15 s (150 ms) — reliable, but slow (~2.0 s total).
+#   v0.1.6: default 0.10 s (100 ms) — verified sufficient, ~1.6 s total.
+# Worst-case inter-space gap at 100 ms is ~125 ms — ~4× X11's default
+# 30 ms key-repeat rate, just past the detector's sensitivity window.
+# If you see the rainbow cursor / dropped spaces on your setup, bump
+# via the env var (try 0.15 then 0.2) before opening an issue.
+SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.1}"
 
 # Source the validator
 # shellcheck source=../lib/validate.sh
@@ -218,11 +216,12 @@ sleep 0.03
 # 30 ms key-repeat window and looks like a held key to Claude Code's
 # repeat-based detector.
 #
-# v0.1.5 raises the default settle from 0.05 s to 0.15 s after live
-# testing showed 50 ms alone still tripped the detector on some
-# setups (inter-space gap of ~75 ms was still too tight). 150 ms
-# lifts the worst-case inter-space gap to ~175 ms, ~6× X11's repeat
-# rate. Tune further via the I3_QUICKPHRASE_SPACE_SETTLE env var.
+# v0.1.5 raised the default settle from 0.05 s to 0.15 s after 50 ms
+# proved too tight (inter-space gap of ~75 ms was still inside the
+# detector's window). v0.1.6 trims the default to 0.1 s (100 ms) —
+# verified sufficient in practice and ~650 ms faster per phrase than
+# 0.15. Worst-case inter-space gap at 100 ms: ~125 ms. Tune further
+# via the I3_QUICKPHRASE_SPACE_SETTLE env var.
 #
 # Per-run `--file -` (stdin) keeps the byte-literal, no-argv-leak
 # invariant from v0.1.0 for every word. The character loop preserves

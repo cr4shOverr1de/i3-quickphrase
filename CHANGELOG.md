@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6] — 2026-04-20
+
+### Changed
+- **`SPACE_SETTLE` default lowered from `0.15` (150 ms) to `0.1`
+  (100 ms).** v0.1.5's 150 ms reliably cleared Claude Code's
+  voice-mode detector but added ~1.4 s of wall time to the
+  `comprehensive` phrase vs v0.1.3. Live testing confirmed 100 ms is
+  sufficient — worst-case inter-space gap is still ~125 ms, ~4×
+  X11's default 30 ms repeat rate. Trims ~650 ms off total runtime
+  (now ~1.6 s total, vs ~2.0 s at v0.1.5).
+- If your setup needs more margin, bump via the env var (e.g.
+  `I3_QUICKPHRASE_SPACE_SETTLE=0.15`). 150 ms remains the proven-
+  reliable value; 100 ms is the proven-minimum.
+
+### Preserved (no regression)
+- All v0.1.5 / v0.1.4 / v0.1.3 / v0.1.1 / v0.1.0 invariants unchanged.
+
+### Found by
+Trevor in live A/B testing of v0.1.5 → dial-down to 0.1, 2026-04-20.
+
 ## [0.1.5] — 2026-04-20
 
 ### Changed
@@ -230,3 +250,4 @@ begins"). `xdotool key` bypasses the chardelay path entirely.
 [0.1.3]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.3
 [0.1.4]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.4
 [0.1.5]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.5
+[0.1.6]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.6
