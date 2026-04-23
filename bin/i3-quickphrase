@@ -5,7 +5,7 @@
 
 set -euo pipefail
 
-VERSION="0.1.3"
+VERSION="0.1.4"
 PROG="i3-quickphrase"
 
 # Resolve repo root via the symlink target so this works whether the user
@@ -15,6 +15,14 @@ REPO_ROOT="$(cd "$(dirname "$SCRIPT_PATH")/.." && pwd)"
 PHRASES_DIR="$REPO_ROOT/phrases"
 LIB_DIR="$REPO_ROOT/lib"
 LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/i3-quickphrase"
+
+# Inter-space settle time (seconds). See the injection block below for
+# the full rationale. Override at runtime via the environment variable
+# I3_QUICKPHRASE_SPACE_SETTLE (e.g. "0.1" for 100 ms, "0" to disable).
+# 0.05 s = 50 ms, which keeps adjacent space events comfortably beyond
+# X11's default 30 ms key-repeat rate even when the intervening word
+# is a single character like "I".
+SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.05}"
 
 # Source the validator
 # shellcheck source=../lib/validate.sh
@@ -181,16 +189,30 @@ sleep 0.03
 
 # Inject the phrase. --window targets the captured id (focus-drift safe).
 #
-# v0.1.3 splits emission into two paths: non-space runs go through
-# `xdotool type` (12 ms/char) while each space goes through
-# `xdotool key --delay 0 space`. The reason: Claude Code's push-to-talk
-# voice mode retroactively removes the 1-2 most recent spaces from its
-# prompt buffer when it detects a "held space." `xdotool type` holds
-# each synthetic KeyPress open for several milliseconds (xdotool
-# v3.20160805.1's chardelay floor plus X11 XSync + XkbLockGroup + XFlush
-# roundtrip), which trips that detector. `xdotool key` emits KeyPress
-# and KeyRelease back-to-back through a single XTEST call pair with no
-# intra-pair sleep (sub-millisecond hold), which the detector ignores.
+# v0.1.3 split emission into two paths: non-space runs through
+# `xdotool type` (12 ms/char) and each space through
+# `xdotool key --delay 0 space`. This was to defeat Claude Code's
+# push-to-talk voice mode, which retroactively removes the 1-2 most
+# recent spaces from its prompt buffer when it detects a "held space."
+# `xdotool type` holds each synthetic KeyPress open for several
+# milliseconds (xdotool v3.20160805.1's chardelay floor plus X11
+# XSync + XkbLockGroup + XFlush roundtrip); `xdotool key` emits
+# KeyPress and KeyRelease back-to-back through a single XTEST call
+# pair with no intra-pair sleep, so the press-release dwell drops to
+# sub-millisecond.
+#
+# v0.1.4 adds a post-space settle sleep of $SPACE_SETTLE seconds.
+# Diagnostic runs of v0.1.3 still tripped the voice detector on ~30 %
+# of fires, localized to short inter-space words: "I", "is", "me".
+# The failure mode is not the press-release dwell (already tightest
+# possible with xdotool) — it is the gap between adjacent SPACE
+# EVENTS. For a single-character word typed at --delay 12 plus the
+# xdotool process startup overhead, consecutive spaces arrive about
+# 25 ms apart, which is inside X11's default 30 ms key-repeat window
+# and looks like a held key to Claude Code's repeat-based detector.
+# SPACE_SETTLE 0.05 (50 ms) after each key emission lifts the worst-
+# case inter-space gap to ~75 ms, safely outside the detection window.
+# Tune via the I3_QUICKPHRASE_SPACE_SETTLE env var.
 #
 # Per-run `--file -` (stdin) keeps the byte-literal, no-argv-leak
 # invariant from v0.1.0 for every word. The character loop preserves
@@ -201,6 +223,7 @@ sleep 0.03
 # Refs:
 #   https://github.com/anthropics/claude-code/issues/37932
 #   https://github.com/jordansissel/xdotool/blob/v3.20160805.1/xdo.c#L958
+#   https://code.claude.com/docs/en/voice-dictation
 phrase="$(<"$phrase_file")"
 len="${#phrase}"
 buffer=""
@@ -213,6 +236,7 @@ for (( i=0; i<len; i++ )); do
       buffer=""
     fi
     xdotool key --delay 0 --window "$active_id" space
+    sleep "$SPACE_SETTLE"
   else
     buffer+="$ch"
   fi

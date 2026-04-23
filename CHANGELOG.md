@@ -5,6 +5,52 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4] — 2026-04-20
+
+### Fixed
+- **Residual voice-mode triggering after v0.1.3.** v0.1.3's hybrid
+  emission (`xdotool type` for words, `xdotool key --delay 0 space`
+  for spaces) reduced the dropped-space rate from "more often than
+  not" to ~30 %. The remaining failures were reproducibly localized
+  to phrase positions where a single-character word ("I" in
+  `comprehensive`, "I" and "me" in `clarify`) sits between two spaces:
+  the gap between consecutive space events there collapses to
+  `type("I")` + xdotool process startup ≈ 25 ms, which is inside
+  X11's default 30 ms key-repeat rate and reads to Claude Code's
+  voice-mode detector as a held-space event. The dwell itself was no
+  longer the problem — `xdotool key --delay 0 space` emits a
+  press+release pair separated only by one `XFlush` (sub-millisecond),
+  which is the tightest dwell possible without switching tools.
+
+### Changed
+- `bin/i3-quickphrase`: added a `$SPACE_SETTLE`-seconds sleep after
+  each `xdotool key space` emission so that consecutive space events
+  are always separated by more than X11's repeat rate, regardless of
+  the word between them. Default `SPACE_SETTLE=0.05` (50 ms) lifts the
+  worst-case inter-space gap to ~75 ms, safely outside the detection
+  window. Total extra runtime for the 13-space `comprehensive` phrase
+  is ~650 ms.
+- New env var `I3_QUICKPHRASE_SPACE_SETTLE` overrides the default at
+  runtime. Set to `0.1` if 50 ms still triggers voice mode on your
+  setup, or `0` to disable the settle entirely (useful for target
+  apps that don't have Claude Code's voice-mode debouncing).
+- `VERSION` bumped to `0.1.4`.
+
+### Preserved (no regression)
+- All v0.1.3 fixes: hybrid emission, `xdotool key --delay 0` for
+  spaces, per-run `--file -` (stdin), pure-bash character loop.
+- All v0.1.1 / v0.1.0 invariants: explicit modifier keyup, 30 ms
+  propagation sleep, `flock -n` single-shot, `--window` on every
+  xdotool call, validation allowlist.
+- Phrase file byte-for-byte integrity (87 bytes `comprehensive`, 78
+  bytes `clarify`, trailing space preserved in both).
+
+### Found by
+Trevor in live Alt+M / Alt+. re-testing of v0.1.3, 2026-04-20.
+Observed "~7/10 success" pattern with the voice UI (rainbow cursor)
+flashing on the failing trials. Root cause re-diagnosed as
+inter-space event rate rather than per-event dwell.
+
 ## [0.1.3] — 2026-04-20
 
 ### Fixed
@@ -151,3 +197,4 @@ begins"). `xdotool key` bypasses the chardelay path entirely.
 [0.1.1]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.1
 [0.1.2]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.2
 [0.1.3]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.3
+[0.1.4]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.4
