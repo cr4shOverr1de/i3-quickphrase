@@ -5,6 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] — 2026-07-06
+
+### Added
+- **Wayland backend** (`lib/inject-wayland.sh`) using `wtype` via the
+  `zwp_virtual_keyboard_v1` protocol (Hyprland, sway, river). DESIGN.md
+  slotted this as v0.3.0; it shipped early because the maintainer's
+  daily driver moved from Debian/i3/X11 to Arch/Hyprland/Wayland.
+  `wtype` won over `ydotool`/`dotool` (both need a daemon plus
+  `/dev/uinput` privileges): daemon-free, protocol-native.
+- `lib/inject.sh`: the X11 injection block extracted verbatim from
+  `bin/i3-quickphrase` — the factoring that `lib/` pre-paid in v0.1.0.
+  Injector contract shared by both backends: `inject_preflight` /
+  `inject_prepare` / `emit_text` / `emit_space` / `inject_doctor`.
+- Runtime backend selection: `WAYLAND_DISPLAY` → wtype, else `DISPLAY`
+  → xdotool. A Wayland session never falls back to xdotool — that
+  would reach XWayland clients only and silently miss native windows.
+- New env var `I3_QUICKPHRASE_MOD_SETTLE` (default `0.25` s): Wayland
+  cannot keyup a physically held modifier (no cross-device analogue of
+  `xdotool keyup`), so release-triggered binds plus a settle sleep
+  replace the X11 keyup trick.
+- `dist/hyprland-binds.lua` (Lua config parser) and
+  `dist/hyprland.conf` (classic syntax) binding snippets.
+- `install.sh` is session-aware: on Wayland it requires `wtype`,
+  symlinks the binary, and prints manual bind wiring — deliberately no
+  compositor-config auto-edit (Hyprland configs are too personal to
+  machine-edit, and there is no `i3 -C`-grade validator to hide
+  behind).
+- `doctor` is backend-aware: shared deps, then the selected backend's
+  own section.
+
+### Changed
+- `phrases/clarify.txt`: restored the apostrophe — "youre" → "you're"
+  (76 → 77 bytes). It was dropped accidentally in a61e65e (the
+  98%-understand → 95%-complete rewording).
+
+### Degraded on Wayland (protocol limitation, documented)
+- **No window pinning.** The virtual-keyboard protocol has no
+  `--window` equivalent; keys land wherever keyboard focus is when
+  they arrive. Focus-drift protection degrades to a fire-time
+  class-allowlist check via `hyprctl`. See SECURITY.md "Wayland
+  differences (v0.2.0)".
+
+### Preserved (no regression)
+- X11 behavior identical: same commands, same timing, same order
+  (preflight → flock → keyup → emit), now sourced from
+  `lib/inject.sh`.
+- The hybrid space-dance emission loop is backend-agnostic and its
+  timing is unchanged — Claude Code's held-space detector lives in the
+  TUI, not in X11. `SPACE_SETTLE` default 0.1 s applies to both
+  backends.
+- No-argv/stdin invariant: `wtype -d 12 -` mirrors
+  `xdotool type --file -` (phrase bytes never hit argv or `ps`).
+- All of: `lib/validate.sh` allowlists, `flock` single-shot,
+  refuse-root installers, phrase-name regex, chmod 700/600 tightening.
+
+### Context
+Debian/i3 box → MS-A2 Arch/Hyprland migration, 2026-07-06. Same two
+phrases, same two keys (Alt+M, Alt+period), new display server.
+
 ## [0.1.6] — 2026-04-20
 
 ### Changed
@@ -251,3 +310,4 @@ begins"). `xdotool key` bypasses the chardelay path entirely.
 [0.1.4]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.4
 [0.1.5]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.5
 [0.1.6]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.1.6
+[0.2.0]: https://github.com/cr4shOverr1de/i3-quickphrase/releases/tag/v0.2.0

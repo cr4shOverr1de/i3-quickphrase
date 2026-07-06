@@ -22,7 +22,7 @@ The asset is the input stream of your focused window. On a typical Linux
 dev box that's a superset of: terminal sessions, sudo prompts, password
 manager search fields, SSH connections, and chat clients.
 
-## Mitigations Built In (v0.1.0)
+## Mitigations Built In (v0.1.x — both backends unless marked X11)
 
 ### Refuse-root install
 `install.sh` and `uninstall.sh` exit immediately if invoked as root, to
@@ -62,7 +62,7 @@ This prevents:
 - Shell metacharacter injection if a future contributor adds command
   substitution
 
-### Captured window ID + `--window <id>`
+### Captured window ID + `--window <id>` (X11 backend)
 The active window ID is captured at script start and passed explicitly to
 `xdotool --window`. If the user Alt+Tabs to a different window between
 trigger and type, the phrase still lands in the *originally* focused
@@ -73,7 +73,7 @@ A non-blocking `flock` on `$XDG_RUNTIME_DIR/i3-quickphrase/<name>.lock`
 prevents key-repeat or rapid double-press from firing the phrase multiple
 times.
 
-### `bindsym --release` + explicit `keyup` of all modifiers
+### `bindsym --release` + explicit `keyup` of all modifiers (X11 backend)
 Defeats the i3 mod-key release race documented in
 [i3 FAQ #478](https://faq.i3wm.org/question/478/how-do-i-simulate-keypresses/index.html).
 By using `--release`, the binding only fires after the user releases the
@@ -105,6 +105,33 @@ uses `xprop` on the active window's `WM_CLASS`. Default is `*` (allow
 any window) for v0.1.0 to maximize compatibility — set the env var if
 you want strict targeting.
 
+## Wayland differences (v0.2.0)
+
+The Wayland backend (`lib/inject-wayland.sh`, `wtype`) keeps every
+filesystem-side mitigation — validators, symlink/owner checks, phrase-name
+regex, `flock`, refuse-root installers, and the no-argv invariant
+(`wtype -` reads stdin exactly as `xdotool type --file -` did). Two
+input-side mitigations change because the virtual-keyboard protocol
+forces it:
+
+### No window pinning
+There is no `--window` equivalent: keys land wherever keyboard focus is
+when they arrive, so the focus-drift race is only *partially* mitigated —
+the class allowlist is evaluated against the focused window at fire time
+(via `hyprctl`). If your threat model includes muscle-memory misfires
+into sudo prompts or password managers, set
+`I3_QUICKPHRASE_ALLOWED_CLASSES` on Wayland — it is the only line of
+defense there. Note: Wayland classes are app_ids and can differ from X11
+`WM_CLASS` for the same app.
+
+### No synthetic modifier keyup
+A virtual keyboard cannot release a key held on another (physical)
+device. The X11 keyup trick is replaced by two layers: the bind must
+fire on key release (Hyprland Lua parser: `{ release = true }`; classic
+syntax: `bindr`), and the injector sleeps `I3_QUICKPHRASE_MOD_SETTLE`
+seconds (default 0.25) before the first character so a still-held Alt
+clears.
+
 ## Known Limitations
 
 - **Window-class allowlist disabled by default.** v0.1.0 ships with
@@ -116,8 +143,9 @@ you want strict targeting.
   payloads but is not a substitute for code review.
 - **No defense against an attacker with arbitrary code execution on your
   machine.** This is out of scope.
-- **No Wayland support.** xdotool requires X11. Wayland users will need
-  to wait for v0.3.0 (planned `lib/inject-wayland.sh` using `ydotool`).
+- **Wayland: no window pinning.** See "Wayland differences (v0.2.0)"
+  above — the focus-drift race is only partially mitigated there; the
+  fire-time allowlist is the remaining control.
 
 ## Reporting Vulnerabilities
 
@@ -127,5 +155,4 @@ Open a private security advisory on GitHub, or email tw22@protonmail.com.
 
 - Defeating attackers with arbitrary code execution on your machine
 - Defending against malicious i3 config edits performed by other tools
-- Wayland (planned for v0.3.0)
 - Multi-user systems (the tool is designed for single-user dev workstations)

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# i3-quickphrase — bind i3 keys to type fixed phrases into the focused window
+# i3-quickphrase — bind a compositor keybinding (i3/X11 or Hyprland/Wayland)
+# to type fixed phrases into the focused window
 # https://github.com/cr4shOverr1de/i3-quickphrase
 
 set -euo pipefail
 
-VERSION="0.1.6"
+VERSION="0.2.0"
 PROG="i3-quickphrase"
 
 # Resolve repo root via the symlink target so this works whether the user
@@ -28,6 +29,8 @@ LOCK_DIR="${XDG_RUNTIME_DIR:-/tmp}/i3-quickphrase"
 # 30 ms key-repeat rate, just past the detector's sensitivity window.
 # If you see the rainbow cursor / dropped spaces on your setup, bump
 # via the env var (try 0.15 then 0.2) before opening an issue.
+# v0.2.0: the same default drives the Wayland backend — the detector
+# lives in Claude Code's TUI, not in the display server.
 SPACE_SETTLE="${I3_QUICKPHRASE_SPACE_SETTLE:-0.1}"
 
 # Source the validator
@@ -49,6 +52,27 @@ die() {
   exit 1
 }
 
+# ---- backend selection (v0.2.0 — DESIGN.md's pre-paid lib/ factoring) ----
+# A Wayland session always gets the Wayland injector: falling back to
+# xdotool there would type into XWayland clients only and silently miss
+# native-Wayland windows.
+injector_path() {
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    echo "$LIB_DIR/inject-wayland.sh"
+  elif [[ -n "${DISPLAY:-}" ]]; then
+    echo "$LIB_DIR/inject.sh"
+  fi
+}
+
+source_injector() {
+  local inj
+  inj="$(injector_path)"
+  [[ -n "$inj" ]] || die "no display session detected (neither WAYLAND_DISPLAY nor DISPLAY is set)"
+  [[ -f "$inj" ]] || die "missing injector: $inj"
+  # shellcheck source=/dev/null
+  source "$inj"
+}
+
 usage() {
   cat <<EOF
 $PROG $VERSION — bind i3 keys to type fixed phrases
@@ -61,15 +85,22 @@ Usage:
 
 Phrases live in: $PHRASES_DIR
 
+Backend (auto-selected): WAYLAND_DISPLAY -> wtype | DISPLAY -> xdotool
+
 Add a phrase:
   printf 'Your phrase ' > $PHRASES_DIR/yourname.txt
-  echo 'bindsym --release \$mod+x exec --no-startup-id ~/.local/bin/$PROG yourname' \\
-       >> $REPO_ROOT/dist/i3-quickphrase.conf
-  i3-msg reload
+  # i3:       append a 'bindsym --release' line to dist/i3-quickphrase.conf,
+  #           then i3-msg reload
+  # Hyprland: add a release bind (see dist/hyprland-binds.lua or
+  #           dist/hyprland.conf), then hyprctl reload
 
 Environment:
   I3_QUICKPHRASE_ALLOWED_CLASSES   Comma-separated allowlist of window classes.
                                    Default: '*' (allow any). Example: 'kitty,Firefox'.
+                                   (Wayland classes are app_ids; they can differ
+                                   from X11 WM_CLASS for the same app.)
+  I3_QUICKPHRASE_SPACE_SETTLE      Inter-space settle seconds (default 0.1).
+  I3_QUICKPHRASE_MOD_SETTLE        Wayland-only pre-type settle seconds (default 0.25).
 EOF
 }
 
@@ -79,14 +110,24 @@ doctor() {
   echo "Phrases dir: $PHRASES_DIR"
   echo "Lock dir:    $LOCK_DIR"
   echo
-  echo "Dependencies:"
-  for cmd in xdotool xprop notify-send i3-msg flock stat; do
+  echo "Shared dependencies:"
+  for cmd in notify-send flock stat; do
     if command -v "$cmd" >/dev/null 2>&1; then
       echo "  [ok]      $cmd: $(command -v "$cmd")"
     else
       echo "  [MISSING] $cmd"
     fi
   done
+  echo
+  local inj
+  inj="$(injector_path)"
+  if [[ -n "$inj" && -f "$inj" ]]; then
+    # shellcheck source=/dev/null
+    source "$inj"
+    inject_doctor
+  else
+    echo "Backend:     (none — neither WAYLAND_DISPLAY nor DISPLAY is set)"
+  fi
   echo
   echo "Phrases:"
   if [[ -d "$PHRASES_DIR" ]]; then
@@ -111,24 +152,6 @@ doctor() {
     echo "  (phrases dir missing)"
   fi
   echo
-  if [[ -n "${DISPLAY:-}" ]]; then
-    echo "DISPLAY:     $DISPLAY"
-  else
-    echo "DISPLAY:     (unset — xdotool will not work)"
-  fi
-  if command -v xdotool >/dev/null 2>&1; then
-    local id
-    id="$(xdotool getactivewindow 2>/dev/null || true)"
-    if [[ -n "$id" ]]; then
-      echo "Active id:   $id"
-      if command -v xprop >/dev/null 2>&1; then
-        local wmclass
-        wmclass="$(xprop -id "$id" WM_CLASS 2>/dev/null || true)"
-        echo "Active class: ${wmclass:-unknown}"
-      fi
-    fi
-  fi
-  echo
   echo "Allowlist:   ${I3_QUICKPHRASE_ALLOWED_CLASSES:-* (any window)}"
 }
 
@@ -147,32 +170,10 @@ validate_phrase_name "$phrase_name" || die "invalid phrase name: $phrase_name"
 phrase_file="$PHRASES_DIR/$phrase_name.txt"
 validate_phrase_file "$phrase_file" || die "phrase file failed validation: $phrase_file"
 
-# Need DISPLAY for xdotool
-if [[ -z "${DISPLAY:-}" ]]; then
-  die "DISPLAY is unset (Wayland or no X server)"
-fi
-
-# Capture active window NOW (defeats focus drift between check and type)
-active_id="$(xdotool getactivewindow 2>/dev/null || true)"
-[[ -n "$active_id" ]] || die "no active window detected"
-
-# Optional window-class allowlist
-allowed="${I3_QUICKPHRASE_ALLOWED_CLASSES:-*}"
-if [[ "$allowed" != "*" ]]; then
-  if ! command -v xprop >/dev/null 2>&1; then
-    die "I3_QUICKPHRASE_ALLOWED_CLASSES is set but xprop is not installed"
-  fi
-  # WM_CLASS is reported as: WM_CLASS(STRING) = "instance", "class"
-  # We grab the second quoted string (the class).
-  active_class="$(xprop -id "$active_id" WM_CLASS 2>/dev/null \
-                  | sed -n 's/.*"\([^"]*\)"$/\1/p')"
-  if [[ -z "$active_class" ]]; then
-    die "could not determine active window class"
-  fi
-  if ! echo "$allowed" | tr ',' '\n' | grep -qFx "$active_class"; then
-    die "focused window class '$active_class' not in allowlist '$allowed'"
-  fi
-fi
+# Select the injection backend (X11/xdotool or Wayland/wtype) and run its
+# preflight: dependency check, focus/class capture, allowlist enforcement.
+source_injector
+inject_preflight
 
 # Single-shot guard via flock (prevents key-repeat double-fire)
 mkdir -p "$LOCK_DIR"
@@ -182,18 +183,17 @@ if ! flock -n 9; then
   exit 0
 fi
 
-# Defeat the held-modifier race: explicitly release any modifier keys
-# before typing. This is more reliable than xdotool's --clearmodifiers,
-# which has a known "restore" bug (xdotool#43) where it re-presses
-# modifiers at the end of typing — leaving them stuck if the user has
-# already released them physically.
-xdotool keyup Alt_L Alt_R Control_L Control_R Shift_L Shift_R Super_L Super_R 2>/dev/null || true
+# Backend-specific mitigation for the held-modifier race: the X11 injector
+# keyups every modifier explicitly (xdotool#43 rationale in lib/inject.sh);
+# the Wayland injector — which cannot keyup a physically held key — settles
+# I3_QUICKPHRASE_MOD_SETTLE seconds instead.
+inject_prepare
 
-# Tiny propagation delay so the synthetic keyup events land before xdotool
-# starts pumping characters into X11's event queue.
-sleep 0.03
-
-# Inject the phrase. --window targets the captured id (focus-drift safe).
+# Inject the phrase through the selected backend's emit primitives
+# (v0.2.0: lib/inject.sh = xdotool, window-pinned to the captured id;
+# lib/inject-wayland.sh = wtype). The loop below is backend-agnostic and
+# the space-dance timing applies unchanged on both backends, because the
+# detector lives in Claude Code's TUI, not in the display server.
 #
 # v0.1.3 split emission into two paths: non-space runs through
 # `xdotool type` (12 ms/char) and each space through
@@ -240,17 +240,15 @@ for (( i=0; i<len; i++ )); do
   ch="${phrase:$i:1}"
   if [[ "$ch" == " " ]]; then
     if [[ -n "$buffer" ]]; then
-      printf '%s' "$buffer" \
-        | xdotool type --delay 12 --window "$active_id" --file -
+      emit_text "$buffer"
       buffer=""
     fi
-    xdotool key --delay 0 --window "$active_id" space
+    emit_space
     sleep "$SPACE_SETTLE"
   else
     buffer+="$ch"
   fi
 done
 if [[ -n "$buffer" ]]; then
-  printf '%s' "$buffer" \
-    | xdotool type --delay 12 --window "$active_id" --file -
+  emit_text "$buffer"
 fi

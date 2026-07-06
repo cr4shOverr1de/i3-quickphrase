@@ -1,6 +1,6 @@
 # i3-quickphrase
 
-> Bind an i3 keyboard shortcut to type a fixed phrase into the focused window.
+> Bind a keyboard shortcut — i3/X11 or Hyprland/Wayland — to type a fixed phrase into the focused window.
 
 Press a key, your phrase types itself. Stop typing the same prompt fifty times a day.
 
@@ -11,7 +11,7 @@ git clone git@github.com:cr4shOverr1de/i3-quickphrase ~/projects/i3-quickphrase
 cd ~/projects/i3-quickphrase && ./install.sh
 ```
 
-The installer is idempotent, refuses to run as root, validates your i3 config with `i3 -C` before swapping it, and adds a clearly-marked `BEGIN i3-quickphrase` / `END i3-quickphrase` block to `~/.config/i3/config` so uninstall is surgical.
+The installer is idempotent, refuses to run as root, validates your i3 config with `i3 -C` before swapping it, and adds a clearly-marked `BEGIN i3-quickphrase` / `END i3-quickphrase` block to `~/.config/i3/config` so uninstall is surgical. On a Wayland session it symlinks the binary and prints copy-paste bind wiring instead — it deliberately never edits your compositor config (there is no `i3 -C`-grade validator to hide behind).
 
 ## Use
 
@@ -30,12 +30,16 @@ Three steps. No CLI to learn — convention over command.
 #    Use printf (not echo) so you can include a trailing space without a newline.
 printf 'Please review this carefully. ' > phrases/review.txt
 
-# 2. Add a binding to dist/i3-quickphrase.conf
+# 2. Add a binding
+#    i3: append to dist/i3-quickphrase.conf
 echo 'bindsym --release $mod+r exec --no-startup-id ~/.local/bin/i3-quickphrase review' \
      >> dist/i3-quickphrase.conf
+#    Hyprland: copy a line from dist/hyprland-binds.lua (Lua parser)
+#    or dist/hyprland.conf (classic syntax), change the key + name
 
-# 3. Reload i3
-i3-msg reload
+# 3. Reload your compositor
+i3-msg reload      # i3
+hyprctl reload     # Hyprland
 ```
 
 That's it. Press Alt+R, your new phrase types itself.
@@ -46,7 +50,7 @@ That's it. Press Alt+R, your new phrase types itself.
 i3-quickphrase doctor
 ```
 
-Reports: dependencies, phrase files (with size and validation status), `DISPLAY`, active window class, and current allowlist.
+Reports: shared + backend dependencies, phrase files (with size and validation status), the auto-selected backend (`WAYLAND_DISPLAY` → wtype, `DISPLAY` → xdotool), active window class, and current allowlist.
 
 ## Window-class allowlist (optional)
 
@@ -58,12 +62,20 @@ export I3_QUICKPHRASE_ALLOWED_CLASSES=kitty
 
 Or comma-separated: `kitty,Firefox,Chromium`. The check uses `xprop` on the active window's `WM_CLASS`. If `xprop` is not installed and the env var is set, the script aborts.
 
+On Wayland the check runs at fire time via `hyprctl` against the focused window's app_id — which can differ from X11's `WM_CLASS` for the same app (kitty stays `kitty`; ghostty is `com.mitchellh.ghostty`). If the class can't be determined while the env var is set, the script aborts.
+
 ## Requirements
 
-- Linux + i3wm + X11 (Wayland not supported in v0.1.0 — see `DESIGN.md` for v0.3.0 plans)
+**X11 + i3:**
 - Required: `xdotool`, `i3`, `i3-msg`
 - Recommended: `xprop` (class allowlist), `notify-send` (visible errors), `flock` (reentry guard)
-- Install on Debian/Ubuntu/Kali: `sudo apt install xdotool x11-utils libnotify-bin util-linux i3`
+- Debian/Ubuntu/Kali: `sudo apt install xdotool x11-utils libnotify-bin util-linux i3`
+
+**Wayland + Hyprland (since v0.2.0):**
+- Required: `wtype` (daemon-free virtual-keyboard injector; wlroots-lineage compositors)
+- Recommended: `hyprctl` (class allowlist — ships with Hyprland), `notify-send`, `flock`
+- Arch: `sudo pacman -S wtype` · Debian/Ubuntu: `sudo apt install wtype`
+- Caveats vs X11: no window pinning (keys follow focus; the allowlist is checked at fire time) and no modifier keyup (binds must fire on release; the script settles `I3_QUICKPHRASE_MOD_SETTLE`, default 0.25 s). Details in `SECURITY.md`.
 
 ## Uninstall
 
@@ -86,15 +98,15 @@ Phrase files are typed as keystrokes into your focused window — **treat them a
 - Phrase content must be printable ASCII + TAB + LF only (rejects ANSI escape injection, OSC 52 clipboard exfil, Trojan Source bidi controls, zero-width characters)
 - Install/uninstall scripts refuse to run as root
 - Single-shot `flock` prevents key-repeat double-fire
-- Window ID is captured at script start and passed to `xdotool --window <id>`, defeating focus-drift races
-- `bindsym --release` + `--clearmodifiers` defeats the i3 mod-key release race so xdotool isn't typing while Alt is still held
+- X11: window ID captured at script start and passed to `xdotool --window <id>`, defeating focus-drift races. Wayland has no equivalent — the class allowlist is checked at fire time instead (see `SECURITY.md`)
+- Release-triggered binds + explicit modifier keyup (X11) / a pre-type settle (Wayland) defeat the mod-key release race so nothing types while Alt is still held (`--clearmodifiers` is deliberately not used — xdotool#43)
 - Optional `I3_QUICKPHRASE_ALLOWED_CLASSES` env var restricts which window classes can receive a phrase
 
 See [`SECURITY.md`](SECURITY.md) for the full threat model.
 
 ## Roadmap
 
-See [`DESIGN.md`](DESIGN.md). v0.2.0 ships a full stateful CLI (`qp add | list | edit | remove | test`); v0.3.0 adds a Wayland backend.
+See [`DESIGN.md`](DESIGN.md). v0.2.0 shipped the Wayland backend (originally slotted v0.3.0 — machine migrations don't wait for roadmaps). The full stateful CLI (`qp add | list | edit | remove | test`) moves to v0.3.0.
 
 ## License
 

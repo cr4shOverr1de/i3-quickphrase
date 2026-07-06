@@ -20,6 +20,8 @@ jobs:
           shellcheck -S error \
             bin/i3-quickphrase \
             lib/validate.sh \
+            lib/inject.sh \
+            lib/inject-wayland.sh \
             install.sh \
             uninstall.sh
 

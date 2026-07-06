@@ -1,6 +1,6 @@
 # Design Notes & Roadmap
 
-## v0.1.0 (current) — Hardened minimal framework
+## v0.1.x — Hardened minimal framework
 
 A small, opinionated, security-conscious foundation. The `i3-quickphrase`
 binary takes a phrase name and types the matching phrase into the
@@ -19,10 +19,39 @@ Architect, Researcher, Designer, Pentester) across five rounds. The
 Designer's full stateful CLI vision was deferred to v0.2.0 to keep v0.1.0
 shippable and auditable.
 
-## v0.2.0 (planned) — Full stateful CLI (the Designer's vision)
+## v0.2.0 (shipped 2026-07-06) — Wayland backend
 
-A friendly command surface on top of the v0.1.0 foundation. Backward
-compatible: the v0.1.0 manual workflow continues to work.
+Originally slotted as v0.3.0; shipped early when the maintainer's daily
+driver moved from Debian/i3/X11 to Arch/Hyprland/Wayland. The factoring
+landed exactly as drawn: the inline injection block became
+`lib/inject.sh` (X11/xdotool, extracted verbatim) and
+`lib/inject-wayland.sh` (wtype), selected at runtime.
+
+Decisions that differ from the original sketch:
+
+- **`wtype`, not `ydotool` or `dotool`.** Both alternatives need a
+  daemon plus `/dev/uinput` privileges (udev rules or `input` group
+  membership). `wtype` speaks `zwp_virtual_keyboard_v1` directly —
+  daemon-free, works on wlroots-lineage compositors (Hyprland, sway,
+  river).
+- **`$WAYLAND_DISPLAY`, not `$XDG_SESSION_TYPE`.** `WAYLAND_DISPLAY` is
+  the thing wtype actually needs, and it survives nested shells and
+  spawned processes more reliably than session-type metadata.
+- **No compositor-config auto-edit on Wayland.** i3 has `i3 -C` to
+  validate a machine-edited config before atomically swapping it;
+  Hyprland setups (especially Lua-parser configs) have no equivalent,
+  so `install.sh` prints copy-paste bind wiring instead
+  (`dist/hyprland-binds.lua`, `dist/hyprland.conf`).
+
+Two protocol-forced downgrades vs X11, documented in SECURITY.md
+"Wayland differences (v0.2.0)": no window pinning (fire-time class
+allowlist instead) and no synthetic modifier keyup (release-binds +
+`I3_QUICKPHRASE_MOD_SETTLE`, default 0.25 s, instead).
+
+## v0.3.0 (planned) — Full stateful CLI (the Designer's vision)
+
+A friendly command surface on top of the existing foundation. Backward
+compatible: the manual workflow continues to work.
 
 ```
 qp add <name> --key Mod1+r        # interactive: $EDITOR opens, conflict-checks i3 binds, auto-reloads
@@ -50,16 +79,9 @@ Key features:
 The conflict detector parses i3 config as untrusted text (no `eval`,
 no `source`); the Pentester seat's hard requirements still apply.
 
-## v0.3.0 (planned) — Wayland backend
-
-The v0.1.0 injection backend is currently inlined into `bin/i3-quickphrase`.
-v0.3.0 will factor it into `lib/inject.sh` (X11/xdotool) and add
-`lib/inject-wayland.sh` using `ydotool` or `dotool`. Backend selection
-at runtime via `$XDG_SESSION_TYPE` or `$WAYLAND_DISPLAY`.
-
-This is the reason `lib/` exists in v0.1.0 even though it currently only
-holds `validate.sh`: the directory layout pre-pays the migration cost
-without spending it today.
+*(Historical note: `lib/` existed from v0.1.0 holding only `validate.sh`
+precisely to pre-pay the injection-backend factoring. The bet paid off
+in v0.2.0 — the migration cost was already spent.)*
 
 ## Design FAQs
 
@@ -97,6 +119,14 @@ These solve **four different races**, not one:
 4. **Focus-drift race** (user Alt+Tabs between bind-fire and type)
    → fixed by capturing the window ID at start and passing
    `--window <id>` to xdotool
+
+**Wayland variance (v0.2.0):** races 1 (release-triggered binds) and 3
+(`flock`) port unchanged. Race 2 has no keyup equivalent — a virtual
+keyboard cannot release another device's held key — so the Wayland
+injector sleeps `I3_QUICKPHRASE_MOD_SETTLE` (default 0.25 s) instead.
+Race 4 cannot be fully defeated: the protocol has no window pinning, so
+the class allowlist is re-checked at fire time and the residual gap is
+accepted and documented in SECURITY.md.
 
 ### Why NOT `xdotool --clearmodifiers`?
 
